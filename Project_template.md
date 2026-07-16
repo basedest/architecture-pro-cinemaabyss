@@ -66,6 +66,46 @@ To-Be контейнерная диаграмма (C4 level 2):
 Необходимые тесты для проверки этого API вызываются при запуске npm run test:local из папки tests/postman 
 Приложите скриншот тестов и скриншот состояния топиков Kafka http://localhost:8090 
 
+---
+
+## Реализация Задания 2
+
+### Proxy-service (API Gateway, Strangler Fig)
+
+Реализован на Go (stdlib `net/http` + `httputil.ReverseProxy`), исходники в [`src/microservices/proxy`](src/microservices/proxy). Единый обработчик маршрутизирует входящие запросы по пути:
+
+- `GET /health` → `200 text/plain` `Strangler Fig Proxy is healthy`;
+- `/api/events` и `/api/events/*` → проксируются в `events-service`;
+- `/api/movies` и `/api/movies/*` → **процентная маршрутизация** Strangler Fig: если `GRADUAL_MIGRATION=true` и `rand(100) < MOVIES_MIGRATION_PERCENT`, запрос уходит в `movies-service`, иначе — в монолит;
+- все остальные пути (`/api/users`, `/api/payments`, `/api/subscriptions`, …) → монолит.
+
+Семантика фиче-флага: `GRADUAL_MIGRATION=false` полностью выключает разделение — весь трафик `/api/movies` идёт на монолит; `MOVIES_MIGRATION_PERCENT=100` означает «домен полностью мигрирован» и весь трафик идёт в `movies-service`. Каждый запрос логируется как `proxy: METHOD PATH -> targetHost`, что позволяет наблюдать переключение трафика. Проверка (логи `cinemaabyss-proxy-service`):
+
+- `MOVIES_MIGRATION_PERCENT=100` → 5/5 запросов `/api/movies` → `movies-service:8081`;
+- `GRADUAL_MIGRATION=false` → 5/5 запросов `/api/movies` → `monolith:8080`;
+- значение по умолчанию `50` → трафик делится примерно пополам между `movies-service` и монолитом.
+
+### Events-service (Kafka MVP)
+
+Реализован на Go с `github.com/segmentio/kafka-go`, исходники в [`src/microservices/events`](src/microservices/events). Сервис одновременно является **продюсером и консьюмером**:
+
+- топики: `movie-events`, `user-events`, `payment-events`;
+- API: `GET /api/events/health` → `{"status": true}`; `POST /api/events/{movie|user|payment}` с валидацией обязательных полей (иначе `400 {"error": ...}`);
+- при успехе тело события оборачивается в конверт `Event{id, type, timestamp, payload}`, синхронно публикуется в соответствующий топик, и возвращается `201` с `EventResponse{status:"success", partition, offset, event}` (реальные partition/offset берутся из Kafka через `Writer.Completion` + `WriterData`);
+- отдельная goroutine-консьюмер на каждый топик читает сообщения и пишет их в лог: `Processing <topic>: partition=<p> offset=<o> value=<json>` — это подтверждает сквозной путь produce → consume.
+
+Конфигурация обоих сервисов в `docker-compose.yml` уже присутствует и не менялась (кроме временного изменения `MOVIES_MIGRATION_PERCENT`/`GRADUAL_MIGRATION` для демонстрации, возвращённого к `50`/`true`).
+
+### Результаты
+
+Все postman-тесты (`npm run test:local`, папки Monolith / Movies / Events / Proxy) зелёные — 22 запроса, 42 ассерта, 0 ошибок:
+
+![Postman tests](docs/screenshots/postman-tests.png)
+
+Состояние топиков Kafka в Kafka UI (`http://localhost:8090`) — все три доменных топика созданы и содержат сообщения:
+
+![Kafka topics](docs/screenshots/kafka-topics.png)
+
 
 ## Задание 3
 
