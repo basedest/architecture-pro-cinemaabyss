@@ -423,6 +423,21 @@ minikube tunnel
 https://cinemaabyss.example.com/api/movies
 и приложите скриншот развертывания helm и вывода https://cinemaabyss.example.com/api/movies
 
+---
+
+### Реализация Задания 4
+
+В `values.yaml` пути образов всех четырёх сервисов переведены на `ghcr.io/basedest/architecture-pro-cinemaabyss/{monolith,proxy-service,movies-service,events-service}` (tag `latest`, pullPolicy `Always`), а `imagePullSecrets.dockerconfigjson` заменён на пустой `{"auths":{}}` (`eyJhdXRocyI6e319`) — образы публичные, токен в git не хранится.
+
+В `templates/configmap.yaml` исправлен хост `MOVIES_SERVICE_URL` (`http://movies` → `http://movies-service`) и добавлены `EVENTS_SERVICE_URL` и `KAFKA_BROKERS`. Шаблоны `templates/services/proxy-service.yaml` и `events-service.yaml` заполнены по образцу `movies-service.yaml`: образ и `pullPolicy` из `.Values.<svc>.image.*`, `containerPort`/`PORT` из `service.targetPort`, `envFrom` только на `cinemaabyss-config` (без DB и secretRef), ресурсы через `toYaml … | nindent`, probes `/health` (proxy) и `/api/events/health` (events), `imagePullSecrets: dockerconfigjson`. Service берёт `port`/`targetPort`/`type` из values (у proxy `port: 80 → targetPort: 8000`).
+
+Статическая проверка: `helm lint src/kubernetes/helm` — 0 ошибок; `helm template … | kubectl apply --dry-run=client -f -` проходит для всех манифестов. Установка выполнена по инструкции (`kubectl delete namespace cinemaabyss` → `helm install cinemaabyss src/kubernetes/helm --namespace cinemaabyss --create-namespace`). Ошибка `InconsistentClusterIdException` не возникла — PVC удалились вместе с namespace. Все 7 подов в статусе `Running`:
+
+![helm deploy](docs/screenshots/helm-deploy.png)
+
+Вызов `http://cinemaabyss.example.com/api/movies` через ingress (helm маршрутизирует `/` → `proxy-service:80` → `targetPort 8000`) возвращает список фильмов:
+
+![helm /api/movies](docs/screenshots/helm-api-movies.png)
 
 # Задание 5
 Компания планирует активно развиваться и для повышения надежности, безопасности, реализации сетевых паттернов типа Circuit Breaker и канареечного деплоя вам как архитектору необходимо развернуть istio и настроить circuit breaker для monolith и movies сервисов.
