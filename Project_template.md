@@ -504,6 +504,27 @@ You can see 21 for the upstream_rq_pending_overflow value which means 21 calls s
 
 Приложите скриншот работы circuit breaker'а
 
+---
+
+### Реализация Задания 5
+
+Istio установлен в namespace `istio-system` через helm ровно по инструкции: `istio-base`, `istiod` (`--wait`), `istio-ingressgateway`. Namespace `cinemaabyss` помечен `istio-injection=enabled`. Существующие поды продолжают работать без сайдкаров — circuit breaking обеспечивает сайдкар *клиента* (fortio), а fortio задеплоен после разметки namespace, поэтому получил sidecar (`2/2 Running`). Postgres/Kafka не перезапускались.
+
+Создан `src/kubernetes/circuit-breaker-config.yaml` — два `DestinationRule` (`movies-service-circuit-breaker`, `monolith-circuit-breaker`) с жёсткими лимитами, чтобы 50 конкурентных соединений сразу упирались в предел:
+
+- `connectionPool.tcp.maxConnections: 1`;
+- `connectionPool.http.http1MaxPendingRequests: 1`, `maxRequestsPerConnection: 1`;
+- `outlierDetection`: `consecutive5xxErrors: 1`, `interval: 1s`, `baseEjectionTime: 30s`, `maxEjectionPercent: 100`.
+
+Нагрузочный тест fortio (`-c 50 -qps 0 -n 500`) при активном circuit breaker'е даёт основную долю `Code 503` (overflow), в то время как без правила все запросы были бы `Code 200`:
+
+- `movies-service`: `Code 200 ≈ 2-3%`, `Code 503 ≈ 97%`, `upstream_rq_pending_overflow` растёт на ~485 за прогон;
+- `monolith`: аналогично `Code 503 ≈ 97%`, `upstream_rq_pending_overflow` ~489 за прогон.
+
+`upstream_rq_pending_overflow` — счётчик запросов, отклонённых circuit breaker'ом; `upstream_rq_pending_total` — сколько прошло в пул ожидания. Ненулевой overflow подтверждает срабатывание паттерна.
+
+![circuit breaker](docs/screenshots/circuit-breaker.png)
+
 Удаляем все
 ```bash
 istioctl uninstall --purge
