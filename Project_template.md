@@ -5,7 +5,14 @@
 1. Спроектируйте to be архитектуру КиноБездны, разделив всю систему на отдельные домены и организовав интеграционное взаимодействие и единую точку вызова сервисов.
 Результат представьте в виде контейнерной диаграммы в нотации С4.
 Добавьте ссылку на файл в этот шаблон
-[ссылка на файл](ссылка)
+To-Be контейнерная диаграмма (C4 level 2):
+
+- Исходник PlantUML: [docs/cinemaabyss-c4-container-tobe.puml](docs/cinemaabyss-c4-container-tobe.puml)
+- Отрендеренная диаграмма: [docs/cinemaabyss-c4-container-tobe.png](docs/cinemaabyss-c4-container-tobe.png)
+
+![To-Be C4 Container diagram](docs/cinemaabyss-c4-container-tobe.png)
+
+Система разделена на домены: **пользователи, платежи, подписки** (пока остаются в монолите), **фильмы** (выделенный `movies-service`) и **события** (`events-service`). Единой точкой входа выступает **API Gateway** (`proxy-service`): он инкапсулирует паттерн Strangler Fig и по фиче-флагу `GRADUAL_MIGRATION` с процентом `MOVIES_MIGRATION_PERCENT` постепенно переключает трафик `/api/movies` с монолита на новый сервис. Взаимодействие построено синхронно через REST/JSON (клиент → gateway → доменные сервисы) и асинхронно через **Kafka** (топики `movie-events` / `user-events` / `payment-events`), что развязывает продюсеров и консьюмеров событий. На переходный период сервисы используют общую **PostgreSQL**; по мере завершения миграции БД будет разделена по владельцам-доменам. Всё разворачивается в Kubernetes (Deployment + Service + Ingress) с доставкой через Helm.
 
 
 ## Задание 2
