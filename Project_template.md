@@ -157,6 +157,24 @@ jobs:
 Как только сборка отработает и в github registry появятся ваши образы, можно переходить к блоку настройки Kubernetes
 Успешным результатом данного шага является "зеленая" сборка и "зеленые" тесты
 
+---
+
+#### Реализация CI/CD
+
+В `.github/workflows/docker-build-push.yml` добавлены:
+
+- триггер сборки на ветку `cinema` (`push.branches: [ main, cinema ]`), workflow-dispatch/release оставлены как были;
+- по образцу шагов монолита и movies добавлены пары «metadata + build-push» для **events-service** (`context: ./src/microservices/events`) и **proxy-service** (`context: ./src/microservices/proxy`) — итого в GHCR публикуются четыре образа под тегами `latest`, `sha-<short>`, `<branch>`.
+- в `api-tests.yml` ветка `cinema` добавлена в `push.branches` и `pull_request.branches`, чтобы контрактные тесты Newman запускались на ветке.
+
+Образы собираются **мультиархитектурно** (`docker/setup-qemu-action` + `platforms: linux/amd64,linux/arm64`): раннеры GitHub — amd64, а локальный кластер minikube на Apple Silicon — arm64, и без arm64-манифеста kubelet падал с `no matching manifest for linux/arm64/v8`.
+
+Образы лежат по пути `ghcr.io/basedest/architecture-pro-cinemaabyss/{monolith,movies-service,events-service,proxy-service}` и сделаны **публичными**, поэтому в кластере используется пустой pull-secret `{"auths":{}}` (base64 `eyJhdXRocyI6e319`) — в git не попадает ни один токен, а анонимный `docker manifest inspect` подтверждает доступность образов.
+
+Обе сборки на ветке `cinema` зелёные (`Docker Build and Push` и `API Tests`, 22 запроса / 42 ассерта):
+
+![CI build green](docs/screenshots/ci-build.png)
+
 
 ### Proxy в Kubernetes
 
@@ -319,7 +337,16 @@ cat .docker/config.json | base64
   Откройте логи event-service и сделайте скриншот обработки событий
 
 #### Шаг 3
-Добавьте сюда скриншота вывода при вызове https://cinemaabyss.example.com/api/movies и  скриншот вывода event-service после вызова тестов.
+
+Кластер поднят в minikube (docker-драйвер, arm64) строго в порядке из инструкции: `namespace` → `configmap`/`secret`/`dockerconfigsecret`/`postgres-init-configmap` → `postgres` → `kafka` → `monolith` → `movies-service`/`events-service` → `proxy-service`, затем `minikube addons enable ingress` + `ingress.yaml`. В `configmap.yaml` добавлены `EVENTS_SERVICE_URL` и `KAFKA_BROKERS`; в `ingress.yaml` корневой путь `/` направлен на `proxy-service:8000` (правило `/api/events` остаётся выше, nginx выбирает самый длинный префикс, поэтому события идут напрямую в `events-service`).
+
+Все 7 подов в статусе `Running` (postgres-0, zookeeper-0, kafka-0, monolith, movies-service, events-service, proxy-service). Вызов `http://cinemaabyss.example.com/api/movies` через ingress+tunnel возвращает список фильмов, а логи прокси показывают `GET /api/movies -> movies-service:8081` — при `MOVIES_MIGRATION_PERCENT=100` весь трафик уходит в новый сервис:
+
+![k8s /api/movies](docs/screenshots/k8s-api-movies.png)
+
+`npm run test:kubernetes` — 22 запроса / 42 ассерта, 0 ошибок. Логи `events-service` подтверждают сквозную обработку событий во всех трёх топиках (`Processing movie-events/user-events/payment-events: partition=… offset=…`):
+
+![k8s events logs](docs/screenshots/k8s-events-logs.png)
 
 
 ## Задание 4
