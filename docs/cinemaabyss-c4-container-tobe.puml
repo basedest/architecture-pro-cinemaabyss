@@ -1,0 +1,36 @@
+@startuml cinemaabyss-c4-container-tobe
+' To-Be C4 Container diagram for CinemaAbyss (Strangler Fig migration state)
+!include <C4/C4_Container>
+
+title CinemaAbyss — To-Be, диаграмма контейнеров (C4 level 2)
+
+Person(viewer, "Пользователь", "Смотрит фильмы через Web / Mobile / Smart TV")
+
+System_Ext(recommender, "Рекомендательная система", "Внешний сервис персональных подборок")
+
+System_Boundary(cinemaabyss, "CinemaAbyss") {
+    Container(gateway, "API Gateway (proxy-service)", "Go, net/http, httputil.ReverseProxy", "Единая точка входа. Strangler Fig: процентная маршрутизация /api/movies по фиче-флагу GRADUAL_MIGRATION / MOVIES_MIGRATION_PERCENT")
+    Container(monolith, "Monolith", "Go", "Домены: пользователи, платежи, подписки (постепенно сокращается по мере миграции)")
+    Container(movies, "Movies Service", "Go", "Домен фильмов: метаданные, жанры, рейтинги")
+    Container(events, "Events Service", "Go, segmentio/kafka-go", "Событийное взаимодействие: продюсер + консьюмер Kafka")
+    ContainerQueue(kafka, "Kafka", "Apache Kafka", "Топики: movie-events / user-events / payment-events")
+    ContainerDb(db, "PostgreSQL", "PostgreSQL 14", "Общая БД на переходный период миграции")
+}
+
+Rel(viewer, gateway, "Смотрит и управляет контентом", "REST/JSON, HTTPS")
+Rel(gateway, monolith, "users / payments / subscriptions + (100-N)% трафика /api/movies", "REST/JSON")
+Rel(gateway, movies, "N% = MOVIES_MIGRATION_PERCENT трафика /api/movies", "REST/JSON")
+Rel(gateway, events, "/api/events/*", "REST/JSON")
+Rel(events, kafka, "Публикует и потребляет события", "Kafka protocol")
+Rel(monolith, db, "Читает/пишет", "SQL")
+Rel(movies, db, "Читает/пишет", "SQL")
+Rel(monolith, recommender, "Запрашивает подборки", "REST/JSON, HTTPS")
+
+note as N1
+  Развёртывание: Kubernetes (Deployment + Service + Ingress),
+  доставка через Helm. Общая PostgreSQL — временная мера
+  на период Strangler Fig миграции.
+end note
+
+SHOW_LEGEND()
+@enduml
